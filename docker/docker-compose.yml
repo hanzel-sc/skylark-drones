@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  monday-bi-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: monday-bi-agent
+    ports:
+      - "8501:8501"
+    environment:
+      - MONDAY_API_KEY=${MONDAY_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - DEALS_BOARD_ID=${DEALS_BOARD_ID:-}
+      - WORK_ORDERS_BOARD_ID=${WORK_ORDERS_BOARD_ID:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ../Deal_funnel_Data.csv:/app/Deal_funnel_Data.csv:ro
+      - ../Work_Order_Tracker_Data.csv:/app/Work_Order_Tracker_Data.csv:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
