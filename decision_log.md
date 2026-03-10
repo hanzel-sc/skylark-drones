@@ -1,110 +1,56 @@
-# Decision Log — Monday BI Agent
+# Decision Log - Monday BI Agent
 
 ## 1. Key Assumptions
 
-### Data Structure
-- Monday.com boards follow the specified column structure (Deals and Work Orders).
-- CSV files serve as fallback when the Monday.com API is unavailable.
-- The Work Orders CSV has an extra blank header row (row 0) that must be skipped during ingestion.
-- Deal values are masked/anonymized but remain numerically meaningful for analytics.
+### Data Integrity and Structure
+- Monday.com Board Schema: We assume boards follow the standard enterprise schema for "Deals" and "Work Orders". Column names may vary slightly, which is why a robust alias mapping system was implemented.
+- Financial Representation: All currency values are treated as absolute numbers in INR. We assume that if a value is "negative" in the source, it represents a data entry error and should be corrected to zero to prevent skewing aggregate analytics.
+- Date Formats: We assume date strings are in standard ISO format or common regional variations (DD-MM-YYYY) and use safe parsing to handle edge cases.
 
-### Business Logic
-- "Active" deals are those with status = "Open".
-- Pipeline value includes only deals with `deal_value > 0` and `deal_status = 'Open'`.
-- "Current quarter" is based on calendar quarters (Q1: Jan-Mar, Q2: Apr-Jun, etc.).
-- Closure probability levels (High/Medium/Low) are categorical, not numeric.
-- Financial amounts are in Indian Rupees (₹) and should be displayed using Lakhs (L) and Crores (Cr) notation.
-
-### Agent Behavior
-- The LLM interprets user intent into one of ~15 predefined metrics.
-- Unknown or conversational queries fall back to `general_query` with context-based response.
-- The system always generates a human-readable insight alongside raw data.
+### Infrastructure
+- API Availability: While the system is designed for real-time Monday.com integration, we assume a CSV fallback is critical for reliability during API rate-limiting or authentication failures.
+- LLM Reliability: We assume that Llama 3.1 8B is capable of consistent structured JSON output when prompted with strict schema definitions.
 
 ---
 
-## 2. Tradeoffs
+## 2. Trade-offs and Rationale
 
-### LangGraph State Machine
-- **Chose LangGraph**: Replaced linear orchestrator with a state graph (`interpret` -> `execute` -> `insight`).
-- **Rationale**: Better control over multi-hop reasoning, error handling, and future scalability for tool-calling agents.
+### LangGraph vs Linear Orchestration
+- Choice: Migrated from a linear Python script to a LangGraph state machine.
+- Rationale: A linear script creates "all-or-nothing" failures. LangGraph allows us to define clear nodes (Interpret -> Execute -> Insight) and route "nonsensical" queries directly to a fallback node, saving time and compute resources.
+- Trade-off: Increased complexity in the codebase, but improved fault tolerance and observability.
 
-### DuckDB vs SQLite vs Pure Pandas
-- **Chose DuckDB**: Provides SQL-like analytics on DataFrames without persistence overhead. Ideal for analytical queries on in-memory data.
-- **Tradeoff**: Adds a dependency, but the performance and expressiveness gains are significant for complex aggregations.
+### In-Memory vs Database Persistence
+- Choice: Used Pure Pandas and DuckDB for in-memory processing.
+- Rationale: For an executive BI tool, the data volume (~350-500 rows) does not justify a permanent SQL database like PostgreSQL. DuckDB allows us to perform high-speed SQL-like aggregations on memory DataFrames without the infrastructure overhead.
+- Trade-off: Data must be re-loaded on app startup, though this is mitigated by Streamlit's session caching.
 
-### Groq (Llama 3.1) vs OpenAI
-- **Chose Groq with Llama 3.1 8B Instant**: Fast inference (~200ms), cost-effective, good at structured JSON output.
-- **Tradeoff**: Smaller context window and less sophisticated reasoning than GPT-4, but sufficient for query interpretation and insight generation in this use case.
-
-### Streamlit vs Dash vs Custom React Frontend
-- **Chose Streamlit**: Rapid prototyping, built-in chat UI, native Python, zero frontend build step. Ideal for an internal BI tool.
-- **Tradeoff**: Less customizable than a React frontend; limited real-time capabilities. Acceptable for a founder-facing dashboard.
-
-### Monday.com API vs Direct Database
-- **Chose Monday.com GraphQL API**: The requirement mandates dynamic board querying. No separate database is maintained.
-- **Tradeoff**: API rate limits and latency. Mitigated with CSV fallback and in-memory caching after initial load.
-
-### CSV Fallback Strategy
-- **Decision**: Support both API and CSV data sources with automatic CSV detection.
-- **Rationale**: The Monday.com API may be unavailable during development/testing. CSVs provide deterministic data for testing and demos.
+### Groq (Llama 3.1) vs OpenAI (GPT-4)
+- Choice: Groq API with Llama 3.1 8B Instant.
+- Rationale: Latency is a primary user experience driver. Groq delivers sub-second inference, making the chat interface feel responsive. Llama 3.1 8B is sufficiently intelligent for query classification and narrative summarization.
+- Trade-off: Slight reduction in complex reasoning capabilities compared to GPT-4, though this is offset by specific system prompting and safe-guards.
 
 ---
 
-## 3. Design Decisions
+## 3. Interpretation of "Leadership Updates"
 
-### LangGraph Orchestration
-The agent uses a structured graph to manage state transitions. This prevents linear bottlenecks and allows for branching logic (e.g., routing nonsensical queries directly to the rephrase node without hitting the analytics engine).
-
-### Modern Dark UI (Aceternity-Inspired)
-- **Palette**: Professional high-contrast dark theme using Cyan/Teal accents (#66FCF1) on a Zinc/Deep-Charcoal base (#0B0C10, #1F2833).
-- **Typography**: Universal Inter font for a professional SaaS feel.
-- **Ordering**: Newest-first chat ordering ensures the most recent insight is always at the top of the viewport.
-
-### Advanced Data Preprocessing
-The pipeline in `DataCleaner` now handles:
-- **Outlier Detection**: Flagging unusually high deal values (3+ Std Dev).
-- **Type Enforcement**: Coercing strings/nulls to proper float64 for financial accuracy.
-- **Corrupted Data Correction**: Fixing negative financial values and stripping non-business characters from sectors.
-- **Duplicate Removal**: Stripping redundant records based on composite keys.
-
-### Two-Phase LLM Processing
-1. **Query Interpretation** (structured JSON output): Converts natural language to a metric identifier with filters.
-2. **Insight Generation** (narrative text): Converts raw analytics results to executive prose.
-
-This separation ensures deterministic analytics (no hallucinated numbers) while leveraging LLM strengths for natural language.
-
-### Error-Resistant Ingestion
-- **API v2024-10 Compatibility**: Updated GraphQL queries to nested `column { title }` structure to resolve breaking changes in the Monday.com API.
-- **Multi-Layer Validation**: Gibberish pre-detection, short-query filtering, and metric mapping fallback.
-
-### Session State for Caching
-- Streamlit's `session_state` caches the agent, loaded data, and chat history.
-- Data is loaded once and reused across queries until explicitly refreshed.
-
-### KPI + Chart + Insight Trifecta
-Every query response includes three components:
-1. **KPI cards**: Quick numeric summary
-2. **Charts**: Visual data representation
-3. **AI Insight**: Executive-level narrative interpretation
+The "Leadership Update" feature was implemented as a comprehensive summary designed for a founder or CXO. My interpretation included:
+- Top-Down View: Prioritizing the "Total Pipeline Value" and "Total Receivables" as the primary health indicators.
+- Operational Pulse: Including "Billing Completion Rate" to show how much work is actually being converted to cash.
+- Exception Reporting: Automatically identifying the "Top Performing Sector" and "Deals in Negotiation" to highlight where executive focus should be directed.
+- Strategic Narrative: Using the LLM to synthesize these numbers into a professional markdown report rather than just a list of KPIs.
 
 ---
 
-## 4. Future Improvements
+## 4. Future Improvements (What I'd do differently with more time)
 
-### Short-Term
-- **Auto-discover board IDs**: Use the Monday.com API to list boards and match by name instead of requiring manual ID input.
-- **Caching layer**: Add Redis or in-memory TTL cache for API responses to reduce Monday.com API calls.
-- **Export capabilities**: Add PDF export for leadership updates and Excel export for data tables.
+### Technical Scaling
+- RAG for Documentation: I would implement a Retrieval-Augmented Generation (RAG) layer to allows founders to ask questions about internal PDF reports or contracts alongside their Monday.com data.
+- Automated Mapping: Currently, column aliases are manual. I would implement a "fuzzy-matching" or LLM-based column mapper that automatically identifies relevant board columns without configuration.
 
-### Medium-Term
-- **Multi-board joins**: Enrich deals data with work order data for cross-board analytics (e.g., "Which won deals have the highest receivables?").
-- **Historical tracking**: Store snapshots of board data over time to enable trend analysis.
-- **Custom alerts**: Set up threshold-based alerts (e.g., "Notify when receivables exceed ₹50L").
-- **User authentication**: Add Streamlit authentication to restrict access to authorized users.
+### User Experience
+- Real-time Webhooks: Instead of manual refreshes, I would implement Monday.com webhooks to push updates to the dashboard in real-time.
+- Multi-User Isolation: Implement a proper auth layer with Row-Level Security (RLS) so different department heads only see their respective data.
 
-### Long-Term
-- **RAG integration**: Index board data and past insights for more contextual LLM responses.
-- **Predictive analytics**: Use historical deal data to predict deal closure probabilities using ML models.
-- **Real-time sync**: Implement webhooks to receive Monday.com board updates in real-time.
-- **Multi-tenant support**: Support multiple Monday.com accounts with tenant isolation.
-- **Custom metric builder**: Allow users to define custom KPIs and analytics queries through the UI.
+### Analytics Depth
+- Predictive Modeling: I would add a "Predictive Closure" metric that uses historical data to estimate the likelihood of a deal closing based on its age and stage, rather than relying on the "Closure Probability" field which is often subjective.
