@@ -1,78 +1,107 @@
 # Monday BI Agent
 
-**AI-Powered Business Intelligence for Founders**
+AI-Powered Business Intelligence for Founders
 
-An intelligent BI copilot that connects to Monday.com boards, cleans business data, runs analytics, generates executive insights, and visualizes results through natural language questions.
-
----
-
-## Architecture
-
-The system uses a modular state-machine approach for processing queries:
-
-1. **Streamlit UI**: Dark-themed dashboard with newest-first chat ordering and interactive Plotly visualizations.
-2. **LangGraph Orchestrator**: Manages the flow from query interpretation to analytical execution and final insight generation.
-3. **Data Pipeline**: Robust cleaning engine that handles null values, outliers, and data corruption before analysis.
-4. **Analytics Engine**: Purpose-built modules for Sales Pipeline, Operations, and Financial metrics.
-5. **LLM Layer**: Powered by Groq (Llama 3.1) for high-speed reasoning and natural language generation.
+The Monday BI Agent is a specialized decision-support system designed to transform raw operations and sales data from Monday.com into actionable executive insights. By combining the speed of the Groq inference engine with the structured orchestration of LangGraph, the agent provides a natural language interface for complex business analytics.
 
 ---
 
-## Project Structure
+## Technical Architecture
 
-- **app.py**: Main dashboard and UI logic.
-- **agent/**: Core intelligence and state machine (LangGraph).
-- **data/**: Monday.com API integration and data cleaning pipeline.
-- **analytics/**: Specific metric calculators for finance, operations, and sales.
-- **config/**: Environment variable management and global constants.
-- **utils/**: Shared helpers for logging, currency, and date formatting.
-- **decision_log.md**: Documentation of assumptions, trade-offs, and architecture.
+The application follows a modular, layer-based architecture designed for high throughput and reliable data interpretation.
+
+```
+[ User Layer ]
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Streamlit Application                                           │
+│ ─ UI Components (Dark Dashboard, Interactive Charts)            │
+│ ─ Session State Management (Data Caching, History)              │
+│ ─ Visualization Layer (Plotly Express, Graph Objects)           │
+└─────────────────────────────────────────┬───────────────────────┘
+                                          │
+                                          ▼
+[ Orchestration Layer ]
+┌─────────────────────────────────────────────────────────────────┐
+│ LangGraph State Machine                                         │
+│                                                                 │
+│ ┌───────────────┐       ┌───────────────┐       ┌───────────────┐│
+│ │   Interpret   │ ─────▶│    Execute    │ ─────▶│   Generate    ││
+│ │    (Node)     │       │    (Node)     │       │    (Node)     ││
+│ └───────┬───────┘       └───────┬───────┘       └───────┬───────┘│
+│         │                       │                       │        │
+│         ▼                       ▼                       ▼        │
+│  QueryInterpreter       Analytics Engine        InsightGenerator │
+│  (NL Intent Map)       (Metric Modules)        (LLM Narrative)   │
+└─────────────────────────────────┬────────────────────────────────┘
+                                  │
+                                  ▼
+[ Data Intelligence Layer ]
+┌─────────────────────────────────────────────────────────────────┐
+│ Monday.com API Client (v2024-10)                                │
+│ ─ GraphQL Query Builder (Nested Column Values)                  │
+│ ─ CSV Fallback Recovery System                                  │
+│                                                                 │
+│ Data Cleaning Pipeline                                          │
+│ ─ Outlier Detection (Z-Score & Std Dev)                         │
+│ ─ Type Enforcement & Schema Normalization                       │
+│ ─ Composite-Key Duplicate Removal                                │
+│ ─ String Sanitization & Business Alias Mapping                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Intelligence Discovery (interpret)
+The system uses Llama 3.1 8B via Groq to perform semantic analysis on user queries. It extracts:
+- Metric Type (e.g., Pipeline Value, Billing Rate, Receivables)
+- Filters (Sector, Time Period, Client)
+- Intent Validity (Detects nonsensical or off-topic queries)
+
+### 2. Analytical Execution (execute)
+Once intent is mapped, the agent invokes specialized analytics modules. These modules utilize Pandas and DuckDB to perform high-speed aggregations on the cleaned dataframes. Areas covered:
+- Sales Pipeline (Funnel analysis, deal trends)
+- Operational Efficiency (Work order status distribution, execution rates)
+- Financial Health (Billing vs. Collection, Outstanding receivables)
+
+### 3. Insight Synthesis (generate)
+The final node takes raw data summaries and identifies strategic anomalies or successes. The LLM translates these findings into executive-level prose, highlighting specific areas for concern or celebration.
 
 ---
 
-## Monday.com Board Configuration
+## Project Structure and Modules
 
-The agent is optimized for two primary board types. While it handles variations, the following structure is recommended:
+### Application Core
+- **app.py**: The frontend entry point. Manages the dual-column layout (Chat vs. Visualizations) and handles user sessions.
+- **agent/agent.py**: Implements the StateGraph. Defines how data moves between nodes and manages the lifecycle of a query.
 
-### Deals Board
-- **Deal Name**: Primary item title.
-- **Deal Status**: Status field (Open, Won, Dead).
-- **Masked Deal Value**: Numeric field for revenue calculation.
-- **Sector**: Categorical field for industry breakdown.
-- **Close Date**: Date field for trend analysis.
+### Data and Analytics
+- **data/monday_client.py**: Handles authentication and pagination with the Monday.com API. Includes error handling for breaking GraphQL changes.
+- **data/data_cleaning.py**: Implements the DataCleaner class. This is where business logic for data integrity resides, including negative value correction and sector normalization.
+- **analytics/pipeline_metrics.py**: Logic for calculating pipeline value, active deal counts, and stage-specific metrics.
+- **analytics/operational_metrics.py**: Computes work order volume and completion rates across different sectors.
+- **analytics/financial_metrics.py**: Analyzes billing cycles, collection efficiency, and financial summaries.
 
-### Work Orders Board
-- **Execution Status**: Current status of project delivery.
-- **Billed Value**: Total amount invoiced.
-- **Collected Amount**: Revenue already received.
-- **Amount Receivable**: Outstanding payments.
-
----
-
-## Example Queries
-
-- "How is our pipeline looking for the mining sector this quarter?"
-- "What deals are likely to close this month?"
-- "Which sectors generate the most revenue?"
-- "How much receivable revenue do we have?"
-- "What is the billing completion rate?"
-- "Show me pipeline by deal stage."
+### Configuration and Utilities
+- **config/settings.py**: Centralized configuration management. Contains environment mappings, sector aliases, and deal stage order.
+- **utils/helpers.py**: Shared utility functions for formatting large currency values (Lakhs/Crores), parsing inconsistent date formats, and safety-checking floats.
+- **utils/logging.py**: Structured JSON logging for monitoring agent performance and API stability.
 
 ---
 
-## Deployment
+## Data Governance and Cleaning
 
-The application is deployed on Streamlit Cloud for ease of accessibility and real-time collaboration.
+The system enforces strict data integrity through a multi-pass cleaning pipeline:
+- **Standardization**: Columns are mapped from raw Monday.com titles to internal standardized identifiers using a configurable alias dictionary.
+- **Integrity**: Finance-critical fields undergo type enforcement. Non-numeric values in numeric columns are coerced to zero or default values based on business importance.
+- **Context Preservation**: While cleaning, the system tracks "Data Quality Warnings" (e.g., missing sectors or potential outliers) and surfaces them alongside the AI insights to ensure transparency for the end-user.
 
-### Configuration on Streamlit Cloud
-1. Connect the GitHub repository to the Streamlit dashboard.
-2. Add the following environment variables in Advanced Settings:
-   - **MONDAY_API_KEY**: Your Monday.com developer token.
-   - **GROQ_API_KEY**: Your Groq API key for Llama 3.1.
-   - **DEALS_BOARD_ID**: The ID of your sales board.
-   - **WORK_ORDERS_BOARD_ID**: The ID of your operations board.
+---
 
-### Maintenance
-- The application automatically pulls data from the connected Monday.com boards.
-- Use the "Refresh Data" button in the sidebar to sync the latest changes from the CRM.
-- For local testing, ensure a .env file is present with the keys mentioned above.
+## Key Performance Indicators (KPIs)
+
+The agent supports real-time calculation of several executive KPIs:
+- **Pipeline Value**: Total potential revenue from open deals.
+- **Billing Completion**: Percentage of work order value that has been successfully invoiced.
+- **Collection Rate**: Ratio of billed revenue that has been successfully collected.
+- **Receivables**: Total outstanding payments due from clients.
+- **Deal Velocity**: Creation trends and stage-progression speed.
